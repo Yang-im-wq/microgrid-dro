@@ -1,0 +1,50 @@
+{
+  "source": "D:\\pv-probabilistic-forecast\\vision\\output\\cloud_cover_yolo.csv",
+  "n_samples": 346,
+  "time_range": [
+    "2026-09-01 00:00:00",
+    "2026-09-16 05:00:00"
+  ],
+  "sample_interval_hours": 1,
+  "fit_method": "AR(1) 最小二乘拟合 ln(ac_k) = k*ln(rho)，滞后 1..8（用于观测自相关）；潜变量相关由滞后1 Kendall tau 换算 rho = sin(pi*tau/2)",
+  "recommended_rho_time": 0.97,
+  "recommended_basis": "cloud_fraction_true",
+  "parameter_meaning": "rho_time 是**高斯 Copula 的潜变量相关**，不是直接观测量。云量本身（观测）的滞后1 Kendall tau 与它满足 tau = (2/pi)*arcsin(rho)。选 Kendall tau 而非 Pearson/Spearman 的原因：Pearson 会被云量的非线性扭曲；Spearman 在 CLM 这种量化严重、大量并列的数据上会退化（实测滞后 7-8 直接算不出）。",
+  "per_series": {
+    "cloud_fraction_true": {
+      "ar1_rho_observed": 0.956,
+      "kendall_tau1": 0.8438,
+      "latent_rho": 0.97,
+      "autocorr_observed_lag1_8": [
+        0.9534,
+        0.9177,
+        0.8813,
+        0.8419,
+        0.81,
+        0.7707,
+        0.7314,
+        0.6955
+      ],
+      "hourly_jump_mean": 0.0373,
+      "label": "CLM 官方云掩膜(权威)"
+    },
+    "cloud_fraction": {
+      "ar1_rho_observed": 0.9722,
+      "kendall_tau1": 0.6697,
+      "latent_rho": 0.8684,
+      "autocorr_observed_lag1_8": [
+        0.7675,
+        0.7071,
+        0.6546,
+        0.6418,
+        0.6688,
+        0.6275,
+        0.6241,
+        0.6058
+      ],
+      "hourly_jump_mean": 0.1196,
+      "label": "YOLO 检测结果"
+    }
+  },
+  "note": "光伏场景生成器 gen_pv_scenarios.m 默认用 recommended_rho_time 作为时间相关系数；这是从卫星云图实测得到的，不是拍脑袋的常数。"
+}
