@@ -1,0 +1,25 @@
+# ---- MATLAB ----
+*.asv
+*.m~
+*.autosave
+slprj/
+codegen/
+
+# ---- Python ----
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# ---- 操作系统 ----
+Thumbs.db
+desktop.ini
+.DS_Store
+
+# ---- 临时 ----
+*.tmp
+*.bak
+*~
+
+# 说明：本项目体积小（约 2 MB），data/ 与 results/ 下的 CSV/PNG 都是可复现的
+# 小文件，**有意入库** —— 便于对照结论与复现。故此处不做排除。
