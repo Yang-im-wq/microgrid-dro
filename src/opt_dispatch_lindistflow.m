@@ -41,7 +41,7 @@ function [x, out] = opt_dispatch_lindistflow(L, dat, pv_avail, varargin)
 
 %% ---------- 选项 ----------
 opt = struct('gamma', 2000, 'voll', 500, 'curt_pen', 0.01, ...
-             'vmax', 1.05, 'vmin', 0.90);
+             'vmax', 1.05, 'vmin', 0.90, 'vroot', 'fixed');
 for k = 1:2:numel(varargin)
     name = varargin{k};
     if ~ischar(name) || ~isfield(opt, name)
@@ -73,6 +73,8 @@ iLS = 4*nt + npv*nt + (1:(nb*nt));
 iSM = 4*nt + npv*nt + nb*nt + (1:(nb*nt));
 iSX = 4*nt + npv*nt + 2*nb*nt + (1:(nb*nt));
 nvar = 4*nt + npv*nt + 3*nb*nt;
+iVR  = nvar + 1;          % 变电站电压平方（vroot='free' 时作为决策变量启用）
+nvar = iVR;
 
 iUf  = @(k,t) iU( (t-1)*npv + k );
 iLSf = @(j,t) iLS( (t-1)*nb + j );
@@ -130,21 +132,27 @@ end
 
 %% ---------- 不等式约束（电压软约束）----------
 % p_inj(t) = B_slack*g + B_ess*(d-c) + B_pv*(pmax - u) - (Pd - ls)
-v_root = 1.0;
+%
+% ★ vroot 选项
+%   'fixed'（默认）：变电站电压平方固定为 1.0，与以往所有结果一致。
+%   'free'：把它作为决策变量，界为 [vmin², vmax²]。
+%   真实变电站有有载调压变压器，可以调压；交流最优潮流会把它顶到上限去降损。
+%   放开它是一个**真实存在的自由度**，但也会压缩电压上限的裕度。
+free_vr = strcmpi(opt.vroot, 'free');
 Aineq = []; bineq = [];
 for t = 1:nt
     p_fix = -dat.Pd(:,t);
     for k = 1:npv
         p_fix = p_fix + B_pv(:,k) * pv_avail(t,k) * dat.pv_cap(k);
     end
-    vfix = v_root - dvQ + Mv * p_fix;
+    vfix0 = -dvQ + Mv * p_fix;        % 不含变电站电压的部分
 
     cg  = Mv * B_slack;
     ce  = Mv * B_ess;
     cpv = Mv * B_pv;
 
     for j = 1:nb
-        % --- 下限: -(Mv*p_dec)_j - sm_j <= vfix_j - v2min
+        % --- 下限: -[Mv p_dec]_j - sm_j <= (vfix_j - v2min)
         row = zeros(1, nvar);
         row(iG(t)) = -cg(j);
         row(iD(t)) = -ce(j);
@@ -152,10 +160,14 @@ for t = 1:nt
         for k = 1:npv, row(iUf(k,t)) =  cpv(j,k); end
         for i = 1:nb, row(iLSf(i,t)) = -Mv(j,i); end   % 母线 i 切负荷抬高母线 j 电压
         row(iSMf(j,t)) = -1;
-        Aineq = [Aineq; row];                                        %#ok<AGROW>
-        bineq = [bineq; vfix(j) - v2min];                            %#ok<AGROW>
+        if free_vr
+            row(iVR) = -1;   bineq(end+1,1) = vfix0(j) - v2min;           %#ok<AGROW>
+        else
+            bineq(end+1,1) = (1.0 + vfix0(j)) - v2min;                    %#ok<AGROW>
+        end
+        Aineq = [Aineq; row];                                            %#ok<AGROW>
 
-        % --- 上限: (Mv*p_dec)_j - sx_j <= v2max - vfix_j
+        % --- 上限: [Mv p_dec]_j - sx_j <= (v2max - vfix_j)
         row = zeros(1, nvar);
         row(iG(t)) =  cg(j);
         row(iD(t)) =  ce(j);
@@ -163,14 +175,23 @@ for t = 1:nt
         for k = 1:npv, row(iUf(k,t)) = -cpv(j,k); end
         for i = 1:nb, row(iLSf(i,t)) =  Mv(j,i); end
         row(iSXf(j,t)) = -1;
-        Aineq = [Aineq; row];                                        %#ok<AGROW>
-        bineq = [bineq; v2max - vfix(j)];                            %#ok<AGROW>
+        if free_vr
+            row(iVR) = 1;    bineq(end+1,1) = v2max - vfix0(j);           %#ok<AGROW>
+        else
+            bineq(end+1,1) = v2max - (1.0 + vfix0(j));                    %#ok<AGROW>
+        end
+        Aineq = [Aineq; row];                                            %#ok<AGROW>
     end
 end
 
 %% ---------- 变量上下界 ----------
 lb = zeros(nvar, 1);
 ub =  inf(nvar, 1);
+if free_vr
+    lb(iVR) = v2min;   ub(iVR) = v2max;      % 变电站电压作为决策变量
+else
+    lb(iVR) = 1.0;     ub(iVR) = 1.0;        % 固定 1.0，与以往结果一致
+end
 ub(iD) = dat.ess_pmax;
 ub(iC) = dat.ess_pmax;
 ub(iE) = dat.ess_emax;   lb(iE) = dat.ess_emin;
@@ -189,7 +210,8 @@ lpopts = optimoptions('linprog', 'Display', 'off', 'OptimalityTolerance', 1e-9);
 [x, fval, exitflag, output] = linprog(f, Aineq, bineq, Aeq, beq, lb, ub, lpopts);
 
 out = struct('exitflag', exitflag, 'fval', fval, 'output', output, 'nvar', nvar, ...
-             'idx', struct('D',iD,'C',iC,'E',iE,'G',iG,'U',iU,'LS',iLS,'SM',iSM,'SX',iSX), ...
+             'idx', struct('D',iD,'C',iC,'E',iE,'G',iG,'U',iU,'LS',iLS,'SM',iSM,'SX',iSX, ...
+                           'iVR',iVR,'free_vr',free_vr), ...
              'nt', nt, 'nb', nb, 'npv', npv);
 if exitflag ~= 1
     warning('opt_dispatch_lindistflow: linprog exitflag = %d (%s)', exitflag, output.message);
