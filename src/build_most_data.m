@@ -24,10 +24,16 @@ function [mpc, xgd, sd, profiles, nt, meta] = build_most_data(varargin)
 %   ★ 数据来源说明（务必注意）
 %     光伏曲线：**真实数据**，来自配套的光伏概率预测项目（LSTM 分位数回归）的
 %               输出，经 bridge/export_pv.py 聚合成 24 点标幺日内曲线。
-%     负荷曲线：**合成数据**。上游数据集只有光伏/气象列，没有负荷。
-%               本函数用一条内置的典型日双峰曲线（早高峰 + 晚高峰），
-%               归一化到日均 1.0。`meta.load_source` 会标明这一点。
-%               拿它做定量结论前必须先替换成真实负荷数据。
+%     负荷曲线：**默认仍是合成数据**。上游数据集只有光伏/气象列，没有负荷。
+%               内核是一条典型日双峰曲线（早高峰 + 晚高峰），归一化到日均 1.0。
+%
+%               **换真实数据的方法（不需要改代码）**：
+%               把 24 点日负荷形状写成两列 CSV —— 第一列小时、第二列相对值 ——
+%               存成 data/load_profile.csv，本函数会自动改用它。
+%               各节点负荷 = 该节点峰值负荷 × 形状系数，所以只需要**形状**，
+%               不需要绝对值（IEEE 33 节点总负荷 3.715 MW 是标准数据，不随之改变）。
+%
+%               `meta.load_source` 与 stdout 都会标明当前用的是哪一种。
 %
 %   See also run_most_24h, case33mg_der, loadmd, loadstoragedata.
 
@@ -67,15 +73,48 @@ if numel(pv_pu) ~= nt
     error('build_most_data: 期望 %d 个小时点，实际 %d', nt, numel(pv_pu));
 end
 
-%% ---------- 3. 负荷曲线（合成，见函数头说明）----------
+%% ---------- 3. 负荷曲线 ----------
+% 优先读 data/load_profile.csv（真实数据）；没有才退回内置合成曲线，并**每次警告**。
+% 这样只要真实曲线一放进 data/ 目录，全流程（P4 的 MOST 与 P5 的优化层）自动切换，
+% 不需要改任何代码 —— P5 的 make_day_data 是直接复用这里的 profile 的。
+%
+% 文件格式（两列，逗号分隔，带表头，24 行）：
+%     hour,load_pu
+%     1,0.730
+%     2,0.683
+%     ...
+% 说明：load_pu 是**相对形状**（日均 = 1.0），代码会再归一化一次。
+%       各节点负荷 = 该节点峰值负荷 × 形状系数，所以只需要形状，不需要绝对值。
+%       IEEE 33 节点的总负荷 3.715 MW 是标准数据，不随形状改变。
 if isempty(opt.load_shape)
-    load_pu = default_load_shape();
-    load_src = 'synthetic typical-day two-peak shape (normalized to mean 1.0)';
+    lfile = fullfile(root, 'data', 'load_profile.csv');
+    if exist(lfile, 'file')
+        Lt = readtable(lfile, 'Delimiter', ',');
+        vn = Lt.Properties.VariableNames;
+        ci = find(contains(lower(vn), {'load', 'p.u', 'pu', '负荷', '系数'}), 1);
+        if isempty(ci)
+            ci = min(2, width(Lt));          % 没有识别到列名就取第 2 列
+        end
+        load_pu = Lt{:, ci};
+        load_src = sprintf('REAL - read from %s (column "%s")', lfile, vn{ci});
+        fprintf('[build_most_data] 负荷曲线：使用 %s\n', lfile);
+    else
+        load_pu = default_load_shape();
+        load_src = 'SYNTHETIC typical-day two-peak shape (normalized to mean 1.0)';
+        warning('build_most_data:SyntheticLoad', ...
+            ['负荷曲线仍是**合成**的 —— 这只适合跑通流程，不适合做定量结论。\n' ...
+             '要换成真实数据：把 24 点日负荷形状写成两列 CSV（hour,load_pu）\n' ...
+             '放到 %s 即可，代码会自动切换，无需改动。'], ...
+             fullfile(root, 'data', 'load_profile.csv'));
+    end
 else
     load_pu = opt.load_shape(:);
     load_src = 'user-provided';
 end
-load_pu = load_pu / mean(load_pu);      % 归一化到日均 1.0
+load_pu = load_pu(:) / mean(load_pu);      % 归一化到日均 1.0
+if numel(load_pu) ~= nt
+    error('build_most_data: 负荷曲线应有 %d 个点，实际 %d 个', nt, numel(load_pu));
+end
 
 %% ---------- 4. profiles ----------
 % idx_ct 的输出位置必须对齐：CT_TGEN 在第 5 位、CT_ROW 第 10、CT_COL 第 11、
