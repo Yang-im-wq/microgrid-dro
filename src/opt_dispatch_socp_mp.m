@@ -30,7 +30,7 @@ function [x, o] = opt_dispatch_socp_mp(L, dat, Xi, varargin)
 %   See also opt_dispatch_socp, optimize_storage_siting, make_day_data.
 
 opt = struct('gamma', 2000, 'voll', 500, 'curt_pen', 0.01, ...
-             'vmax', 1.05, 'vmin', 0.90, 'vroot', 'fixed');
+             'vmax', 1.05, 'vmin', 0.90, 'vroot', 'fixed', 'sm_max', 0.2);
 for k = 1:2:numel(varargin)
     name = varargin{k};
     if ~ischar(name) || ~isfield(opt, name)
@@ -230,6 +230,11 @@ ub = inf(nvar,1);
 for t = 1:nt
     lb(iPf(t,1:nbr)) = -inf;      % 允许反向潮流（光伏反送时 P<0）
     lb(iQf(t,1:nbr)) = -inf;
+    % ★ 电压越限量加物理上界。原本留成无穷大，导致可行域极大、目标极浅，
+    %   内点法容易在里面游荡不收敛。0.2 p.u.² 已经对应约 0.1 p.u. 的电压越限，
+    %   再大就完全不是"可接受的运行点"了，限制它没有副作用。
+    ub(iSMf(t)) = opt.sm_max;
+    ub(iSXf(t)) = opt.sm_max;
 end
 ub(iD) = dat.ess_pmax;   ub(iC) = dat.ess_pmax;
 ub(iE) = dat.ess_emax;   lb(iE) = dat.ess_emin;
