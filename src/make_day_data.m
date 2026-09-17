@@ -26,7 +26,8 @@ function dat = make_day_data(varargin)
 %   See also opt_dispatch_lindistflow, dro_24h, build_most_data.
 
 opt = struct('pv_penetration', 1.5, 'gmax', 4.2, 'vmax', 1.05, 'vmin', 0.90, ...
-             'ess_emax', 3.0, 'ess_pmax', 1.0, 'use_tou', true, 'storage_bus', 18);
+             'ess_emax', 3.0, 'ess_pmax', 1.0, 'use_tou', true, 'storage_bus', 18, ...
+             'storage_power', [], 'storage_energy', []);
 for k = 1:2:numel(varargin)
     name = varargin{k};
     if ~ischar(name) || ~isfield(opt, name)
@@ -39,9 +40,14 @@ root = fileparts(fileparts(mfilename('fullpath')));
 addpath(fullfile(root, 'src'), fullfile(root, 'cases'));
 define_constants;
 
+% 储能功率/能量：storage_power/energy 优先，未给则退回 ess_pmax/ess_emax
+sp = opt.storage_power;   if isempty(sp), sp = opt.ess_pmax; end
+se = opt.storage_energy;  if isempty(se), se = opt.ess_emax; end
+
 [mpc, ~, ~, profiles, nt, meta] = build_most_data( ...
     'pv_penetration', opt.pv_penetration, 'vmax', opt.vmax, 'vmin', opt.vmin, ...
-    'storage_bus', opt.storage_bus);
+    'storage_bus', opt.storage_bus, ...
+    'storage_power', sp, 'storage_energy', se);
 
 load_pu  = profiles(meta.i_load_profile).values(:,1,1);    % nt x 1
 pv_pu    = profiles(meta.i_pv_profile).values(:,1,1);      % nt x 1

@@ -27,7 +27,7 @@ function T = optimize_storage_siting(varargin)
 %
 %   See also make_day_data, opt_dispatch_lindistflow, validate_dispatch_ac.
 
-opt = struct('bus_list', 2:33, 'pen', 1.5, 'gmax', 4.2, ...
+opt = struct('bus_list', 2:33, 'cap_list', 1.0, 'pen', 1.5, 'gmax', 4.2, ...
              'vmax', 1.05, 'vmin', 0.90, 'save', true, 'plot', true);
 for k = 1:2:numel(varargin)
     name = varargin{k};
@@ -43,52 +43,64 @@ define_constants;
 mpopt = mpoption('verbose', 0, 'out.all', 0);
 
 buses = opt.bus_list(:);
-nb_cand = numel(buses);
+caps  = opt.cap_list(:);           % 储能功率容量 MW（能量按 3 小时时长配套）
+[BB, CC] = ndgrid(buses, caps);
+PAIR_B = BB(:);  PAIR_C = CC(:);
+npair = numel(PAIR_B);
 fprintf('\n############################################################\n');
-fprintf('#  储能选址优化：扫描 %d 个候选母线                          \n', nb_cand);
+fprintf('#  储能选址 + 定容：%d 个母线 × %d 档容量 = %d 个组合          \n', ...
+    numel(buses), numel(caps), npair);
+fprintf('#  每档容量按 3 小时时长配套能量 (%.2f ~ %.2f MWh)            \n', ...
+    3*min(caps), 3*max(caps));
 fprintf('############################################################\n\n');
 
 L = distflow_lin(case33mg_der('pv_penetration', 0, 'storage', false));
 
-B     = nan(nb_cand,1);
-cost  = nan(nb_cand,1);
-shed  = nan(nb_cand,1);
-curt  = nan(nb_cand,1);
-vminA = nan(nb_cand,1);
-vmaxA = nan(nb_cand,1);
-nover = nan(nb_cand,1);
-nunder= nan(nb_cand,1);
-loadp = nan(nb_cand,1);
-ok    = false(nb_cand,1);
+B     = nan(npair,1);
+CAP   = nan(npair,1);
+cost  = nan(npair,1);
+shed  = nan(npair,1);
+curt  = nan(npair,1);
+vminA = nan(npair,1);
+vmaxA = nan(npair,1);
+nover = nan(npair,1);
+nunder= nan(npair,1);
+loadp = nan(npair,1);
+ok    = false(npair,1);
 
-fprintf('%-5s | %10s | %8s | %8s | %8s | %6s | %6s | %8s\n', ...
-    'bus', 'cost$/d', 'shedMWh', 'VminAC', 'VmaxAC', '#over', '#under', 'maxLoad%');
-fprintf('%s\n', repmat('-', 1, 76));
+fprintf('%-5s %-6s | %10s | %8s | %8s | %6s | %6s | %8s\n', ...
+    'bus', 'capMW', 'cost$/d', 'shedMWh', 'VminAC', '#over', '#under', 'maxLoad%');
+fprintf('%s\n', repmat('-', 1, 80));
 
-for i = 1:nb_cand
-    b = buses(i);
+for i = 1:npair
+    b = PAIR_B(i);  pcap = PAIR_C(i);
     try
         dat = make_day_data('pv_penetration', opt.pen, 'gmax', opt.gmax, ...
-                            'storage_bus', b, 'vmax', opt.vmax, 'vmin', opt.vmin);
+                            'storage_bus', b, ...
+                            'storage_power', pcap, 'storage_energy', 3*pcap, ...
+                            'vmax', opt.vmax, 'vmin', opt.vmin);
     catch ME
-        fprintf('%-5d | 算例构造失败: %s\n', b, ME.message);
+        fprintf('%-5d %-6.1f | 算例构造失败: %s\n', b, pcap, ME.message);
         continue
     end
     avail = dat.pv_avail_max ./ max(dat.pv_cap);
 
     [x, o] = opt_dispatch_lindistflow(L, dat, avail, 'vmax', opt.vmax, 'vmin', opt.vmin);
     if o.exitflag ~= 1
-        fprintf('%-5d | 优化不可行 (exitflag=%d)\n', b, o.exitflag);
+        fprintf('%-5d %-6.1f | 优化不可行 (exitflag=%d)\n', b, pcap, o.exitflag);
         continue
     end
 
-    % 回灌全交流潮流校验
+    % 回灌全交流潮流校验（算例的储能功率/容量必须与 dat 一致，否则校验的不是同一个系统）
     mpc0 = case33mg_der('pv_penetration', opt.pen, 'storage', true, ...
-                        'storage_bus', b, 'ramp', 'pmax');
+                        'storage_bus', b, ...
+                        'storage_power', pcap, 'storage_energy', 3*pcap, ...
+                        'ramp', 'pmax');
     Tac = validate_dispatch_ac(mpc0, L, dat, x, o, 'vmax', opt.vmax, ...
                                'vmin', opt.vmin, 'quiet', true);
 
     B(i)     = b;
+    CAP(i)   = pcap;
     cost(i)  = o.fval;
     shed(i)  = sum(x(o.idx.LS));
     curt(i)  = sum(x(o.idx.U));
@@ -99,12 +111,12 @@ for i = 1:nb_cand
     loadp(i) = max(Tac.load_pct);
     ok(i)    = true;
 
-    fprintf('%-5d | %10.1f | %8.3f | %8.4f | %8.4f | %6d | %6d | %8.1f\n', ...
-        b, cost(i), shed(i), vminA(i), vmaxA(i), nover(i), nunder(i), loadp(i));
+    fprintf('%-5d %-6.1f | %10.1f | %8.3f | %8.4f | %6d | %6d | %8.1f\n', ...
+        b, pcap, cost(i), shed(i), vminA(i), nover(i), nunder(i), loadp(i));
 end
 
-T = table(B, cost, shed, curt, vminA, vmaxA, nover, nunder, loadp, ok, ...
-    'VariableNames', {'bus','cost_usd_d','shed_MWh','curt_MWh','vmin_ac', ...
+T = table(B, CAP, cost, shed, curt, vminA, vmaxA, nover, nunder, loadp, ok, ...
+    'VariableNames', {'bus','cap_MW','cost_usd_d','shed_MWh','curt_MWh','vmin_ac', ...
                       'vmax_ac','n_over','n_under','max_load_pct','ok'});
 T = T(T.ok, :);
 
@@ -116,12 +128,12 @@ T = sortrows(T, 'score');
 T.rank = (1:height(T))';
 
 fprintf('\n--- 排名（综合分 = 成本 + 1e4×越限时段 + 500×切负荷）---\n');
-fprintf('%-5s %-5s | %10s | %8s | %6s | %6s | %9s\n', ...
-    'rank','bus','cost$/d','shedMWh','#over','#under','maxLoad%');
-fprintf('%s\n', repmat('-', 1, 64));
-for i = 1:min(8, height(T))
-    fprintf('%-5d %-5d | %10.1f | %8.3f | %6d | %6d | %9.1f\n', ...
-        T.rank(i), T.bus(i), T.cost_usd_d(i), T.shed_MWh(i), ...
+fprintf('%-5s %-5s %-6s | %10s | %8s | %6s | %6s | %9s\n', ...
+    'rank','bus','capMW','cost$/d','shedMWh','#over','#under','maxLoad%');
+fprintf('%s\n', repmat('-', 1, 72));
+for i = 1:min(10, height(T))
+    fprintf('%-5d %-5d %-6.1f | %10.1f | %8.3f | %6d | %6d | %9.1f\n', ...
+        T.rank(i), T.bus(i), T.cap_MW(i), T.cost_usd_d(i), T.shed_MWh(i), ...
         T.n_over(i), T.n_under(i), T.max_load_pct(i));
 end
 
