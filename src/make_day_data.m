@@ -26,7 +26,7 @@ function dat = make_day_data(varargin)
 %   See also opt_dispatch_lindistflow, dro_24h, build_most_data.
 
 opt = struct('pv_penetration', 1.5, 'gmax', 4.2, 'vmax', 1.05, 'vmin', 0.90, ...
-             'ess_emax', 3.0, 'ess_pmax', 1.0, 'use_tou', true);
+             'ess_emax', 3.0, 'ess_pmax', 1.0, 'use_tou', true, 'storage_bus', 18);
 for k = 1:2:numel(varargin)
     name = varargin{k};
     if ~ischar(name) || ~isfield(opt, name)
@@ -40,7 +40,8 @@ addpath(fullfile(root, 'src'), fullfile(root, 'cases'));
 define_constants;
 
 [mpc, ~, ~, profiles, nt, meta] = build_most_data( ...
-    'pv_penetration', opt.pv_penetration, 'vmax', opt.vmax, 'vmin', opt.vmin);
+    'pv_penetration', opt.pv_penetration, 'vmax', opt.vmax, 'vmin', opt.vmin, ...
+    'storage_bus', opt.storage_bus);
 
 load_pu  = profiles(meta.i_load_profile).values(:,1,1);    % nt x 1
 pv_pu    = profiles(meta.i_pv_profile).values(:,1,1);      % nt x 1
@@ -50,8 +51,13 @@ dat.nt      = nt;
 dat.nb      = size(mpc.bus, 1);
 dat.Pd      = mpc.bus(:, PD) * load_pu';        % nb x nt
 dat.Qd      = mpc.bus(:, QD);                   % nb x 1
-dat.pv_bus  = mpc.gen(mpc.isolar, GEN_BUS)';    % 1 x npv
-dat.pv_cap  = mpc.gen(mpc.isolar, PMAX)';       % 1 x npv（各点装机 MW）
+if isfield(mpc, 'isolar')          % 渗透率为 0 时没有光伏
+    dat.pv_bus  = mpc.gen(mpc.isolar, GEN_BUS)';    % 1 x npv
+    dat.pv_cap  = mpc.gen(mpc.isolar, PMAX)';       % 1 x npv（各点装机 MW）
+else
+    dat.pv_bus  = [];
+    dat.pv_cap  = [];
+end
 dat.pv_profile = pv_pu;
 dat.ess_bus = mpc.gen(mpc.iess, GEN_BUS);
 dat.ess_pmax = min(opt.ess_pmax, mpc.gen(mpc.iess, PMAX));
@@ -71,7 +77,12 @@ else
 end
 
 % 光伏可用出力上限（MW），(nt x npv)
-dat.pv_avail_max = pv_pu * dat.pv_cap;
+% 光伏可用出力上限（MW），(nt x npv)；渗透率为 0 时是 0 列的矩阵
+if isempty(dat.pv_cap)
+    dat.pv_avail_max = zeros(nt, 0);
+else
+    dat.pv_avail_max = pv_pu * dat.pv_cap;
+end
 end
 
 

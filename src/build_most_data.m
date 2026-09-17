@@ -41,6 +41,7 @@ function [mpc, xgd, sd, profiles, nt, meta] = build_most_data(varargin)
 opt = struct('pv_penetration', 1.5, 'pv_quantile', 0.5, 'hourly', true, ...
              'vmax', 1.05, 'vmin', 0.90, 'load_shape', [], ...
              'tou', false, 'tou_shape', [], ...
+             'storage_bus', 18, ...
              'quadratic_cost', true, 'c2', 0.5, 'c1', 20, 'c0', 0);
 for k = 1:2:numel(varargin)
     name = varargin{k};
@@ -57,6 +58,7 @@ define_constants;
 %% ---------- 1. 算例 ----------
 mpc = case33mg_der('pv_penetration', opt.pv_penetration, ...
                    'vmax', opt.vmax, 'vmin', opt.vmin, ...
+                   'storage_bus', opt.storage_bus, ...
                    'ramp', 'pmax');   % case33mg 爬坡率为 0，多时段会不可行
 nt = 24;
 
@@ -136,9 +138,14 @@ end
 %      实测表现：contab 里只剩第一个 profile 的行，于是"负荷曲线不生效"或
 %      "光伏曲线不生效"，取决于哪个写在前面。这个坑极难查。
 profiles = [];
-for k = 1:numel(mpc.isolar)
+if isfield(mpc, 'isolar')          % 渗透率为 0 时没有光伏，也就没有这个字段
+    pv_idx = mpc.isolar;
+else
+    pv_idx = [];
+end
+for k = 1:numel(pv_idx)
     pk = struct('type', 'mpcData', 'table', CT_TGEN, ...
-        'rows', mpc.isolar(k), 'col', PMAX, 'chgtype', CT_REL, 'values', pv_pu);
+        'rows', pv_idx(k), 'col', PMAX, 'chgtype', CT_REL, 'values', pv_pu);
     profiles = [profiles; pk];                                          %#ok<AGROW>
 end
 
@@ -217,7 +224,7 @@ meta.nt = nt;
 % profiles 是列数组：[4 个光伏; 1 个负荷(: 可能还有 TOU)]。
 % 用索引而不是硬编码 1/2 —— 改成列数组后 profiles(2) 是第二个光伏，不是负荷（踩过）。
 meta.i_pv_profile = 1;
-meta.i_load_profile = numel(mpc.isolar) + 1;
+meta.i_load_profile = numel(pv_idx) + 1;
 meta.storage_MWh = ecap;
 meta.storage_MW = pcap;
 meta.storage_eff = eff;

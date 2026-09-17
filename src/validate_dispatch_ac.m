@@ -25,7 +25,7 @@ function Tac = validate_dispatch_ac(mpc0, L, dat, x, out, varargin)
 %
 %   See also opt_dispatch_lindistflow, distflow_eval.
 
-opt = struct('vmax', 1.05, 'vmin', 0.90);
+opt = struct('vmax', 1.05, 'vmin', 0.90, 'quiet', false);
 for k = 1:2:numel(varargin)
     name = varargin{k};
     if ~isfield(opt, name), error('validate_dispatch_ac: 未知选项 %s', num2str(name)); end
@@ -90,6 +90,8 @@ end
 n_over  = sum(Tac.vmax_ac > opt.vmax + 1e-6);
 n_under = sum(Tac.vmin_ac < opt.vmin - 1e-6);
 dv = Tac.vmin_lin - Tac.vmin_ac;         % 简化模型 - 真实（正 = 简化模型偏乐观）
+
+if opt.quiet, return; end
 
 fprintf('\n=== AC validation of the LinDistFlow dispatch ===\n');
 fprintf('converged            : %d / %d\n', sum(Tac.converged), nt);
