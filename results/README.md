@@ -52,6 +52,7 @@
 | `distflow_model_compare.csv` | `compare_distflow_models.m` | LinDistFlow / SOCP / 全交流 三模型精度对比（同注入） |
 | `mp_model_compare.csv` | `compare_mp_models.m` | 多时段模型对比（⚠️ SOCP-MP 未收敛，脚本会中止） |
 | `vroot_compare.csv` | `test_vroot.m` | 变电站电压固定 vs 放开 |
+| `dro_benefit_scan.csv` | `scan_dro_benefit.m` | **DRO 收益的二维扫描**（4 渗透率 × 4 储能容量 = 16 组，全部无收益） |
 
 ---
 
