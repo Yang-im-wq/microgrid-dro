@@ -28,7 +28,7 @@ function R = dro_24h(varargin)
 
 opt = struct('eps', 0.02, 'ntrain', 12, 'ntest', 200, 'pen', 1.5, ...
              'seed_train', 11, 'seed_test', 99, 'save', true, 'plot', true, ...
-             'gamma', 2000, 'voll', 500, 'tag', '');
+             'gamma', 2000, 'voll', 500, 'tag', '', 'rho', 1.0);
 for k = 1:2:numel(varargin)
     name = varargin{k};
     if ~ischar(name) || ~isfield(opt, name)
@@ -58,8 +58,8 @@ fprintf('substation limit %.2f MW ; storage %.2f MWh / %.2f MW\n\n', ...
     dat.gmax, dat.ess_emax, dat.ess_pmax);
 
 %% ---------- 2. 场景 ----------
-[Xi_tr, qlev, Q] = gen_pv_scenarios(root, nt, npv, opt.ntrain, opt.seed_train);
-Xi_te            = gen_pv_scenarios(root, nt, npv, opt.ntest,  opt.seed_test);
+[Xi_tr, qlev, Q] = gen_pv_scenarios(root, nt, npv, opt.ntrain, opt.seed_train, opt.rho);
+Xi_te            = gen_pv_scenarios(root, nt, npv, opt.ntest,  opt.seed_test,  opt.rho);
 % 确定性场景 = 中位数 q50
 i50 = find(qlev == 0.5, 1);
 Xi_det = repmat(Q(:,i50), [1 npv 1]);
@@ -104,11 +104,13 @@ fprintf('%-5s | %11s | %11s | %11s | %11s\n', ...
     'plan', 'dE[cost]%', 'dCVaR95%', 'dE[shed]%', 'dWorst%');
 fprintf('%s\n', repmat('-', 1, 62));
 for k = [1 3]
-    fprintf('%-5s | %+11.2f | %+11.2f | %+11.2f | %+11.2f\n', names{k}, ...
-        100*(E{k}.cost_exp   - E{2}.cost_exp)  / E{2}.cost_exp, ...
-        100*(E{k}.cost_cvar95- E{2}.cost_cvar95)/ E{2}.cost_cvar95, ...
-        100*(E{k}.shed_exp   - E{2}.shed_exp)  / max(E{2}.shed_exp, 1e-9), ...
-        100*(E{k}.worst_cost - E{2}.worst_cost)/ E{2}.worst_cost);
+    % 分母趋零时百分比会爆掉（切负荷为 0 时实测出现过 +20181966%），
+    % 用 relpct 在分母过小时直接标 n/a，避免误读。
+    fprintf('%-5s | %11s | %11s | %11s | %11s\n', names{k}, ...
+        relpct(E{k}.cost_exp,    E{2}.cost_exp,    1e-6), ...
+        relpct(E{k}.cost_cvar95, E{2}.cost_cvar95, 1e-6), ...
+        relpct(E{k}.shed_exp,    E{2}.shed_exp,    1e-3), ...
+        relpct(E{k}.worst_cost,  E{2}.worst_cost,  1e-6));
 end
 
 %% ---------- 6. 存数据 ----------
@@ -178,4 +180,14 @@ function cdfplot_manual(v, c, nm)
 vs = sort(v(:));
 y = (1:numel(vs))' / numel(vs);
 plot(vs, y, '-', 'LineWidth', 2, 'Color', c, 'DisplayName', nm);
+end
+
+
+function s = relpct(a, b, floorv)
+% 相对百分比；分母过小时返回 n/a（避免除零导致数字爆炸）
+if abs(b) < floorv
+    s = 'n/a';
+else
+    s = sprintf('%+.2f', 100*(a-b)/b);
+end
 end
