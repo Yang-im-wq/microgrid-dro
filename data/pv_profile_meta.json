@@ -81,6 +81,6 @@
     "q90",
     "q95"
   ],
-  "source_project": "D:\\pv-probabilistic-forecast",
+  "source_project": "companion PV probabilistic-forecasting project (LSTM quantile regression)",
   "note_scale": "原始为 50MW 电站数据，仅导出归一化形状；绝对容量由 MATLAB 侧按渗透率决定"
 }
